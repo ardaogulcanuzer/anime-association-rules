@@ -1,0 +1,127 @@
+---
+title: "Anime Preferences with Association Rule"
+author: "Arda UZER"
+date: "2026-02-23"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE}
+library(data.table)
+library(dplyr)
+library(arules)
+library(arulesViz)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this study, we apply association rule mining to anime preference data. Each user is treated as a transaction (basket), and highly rated anime titles are treated as items. The goal is to uncover structured preference patterns among the Top 200 most popular anime titles.
+
+# Dataset
+```{r}
+#Reading and Cleaning Data
+anime  <- fread("anime.csv")
+rating <- fread("rating.csv")
+
+anime[, name := gsub("&#039;", "'", name, fixed = TRUE)]
+anime[, name := gsub("&amp;", "&", name, fixed = TRUE)]
+```
+
+# Data Preparation
+
+## Select Top 200 Anime
+```{r}
+top200 <- anime[order(-members)][1:200, .(anime_id, name, members)]
+```
+
+## Liked Anime (Rating ≥ 8)
+
+```{r}
+liked <- rating[rating >= 8]
+liked <- merge(liked, top200[, .(anime_id, name)], by = "anime_id")
+liked <- unique(liked, by = c("user_id", "name"))
+```
+
+## Create User Baskets
+The transaction summary shows that 62,033 users and 198 anime titles are included in the final analysis. The average basket size of 23.57 indicates that users tend to highly rate multiple titles rather than isolated ones, creating sufficient overlap for meaningful association rule discovery. The distribution of basket sizes also suggests heterogeneous user behavior, as some users rate only a few titles while others rate a substantially larger number of anime.
+```{r}
+baskets <- liked[, .(items = list(unique(name))), by = user_id]
+baskets <- baskets[lengths(items) >= 2]
+
+trans <- as(baskets$items, "transactions")
+summary(trans)
+```
+
+# Exploratory Analysis
+
+The figure displays the 20 most frequently liked anime titles. Highly popular series dominate the distribution, suggesting that user preferences are strongly centered around mainstream titles. This concentration may affect the strength of generated association rules.
+```{r}
+itemFrequencyPlot(trans, topN = 20, type = "absolute")
+```
+
+# Association Rule Mining
+
+We apply the Apriori algorithm with:
+Minimum support = 0.006
+Minimum confidence = 0.60
+Rule length between 2 and 5
+
+```{r}
+rules <- apriori(
+  trans,
+  parameter = list(
+    supp = 0.006,
+    conf = 0.60,
+    minlen = 2,
+    maxlen = 5,
+    target = "rules"
+  )
+)
+```
+
+## Filtering Rules
+```{r}
+rules <- subset(rules, lift > 1.2)
+rules <- rules[!is.redundant(rules)]
+```
+
+
+# Results
+## Top Rules by Lift
+
+The highest-lift rules mainly connect different seasons of the same series. The large lift values indicate strong dependence between these titles, reflecting sequential viewing behavior and franchise loyalty.
+```{r}
+rules_1lhs <- subset(rules, size(lhs(rules)) == 1)
+top_lift <- sort(rules_1lhs, by = "lift", decreasing = TRUE)
+inspect(head(top_lift, 10))
+```
+
+
+## Top Rules by Confidence
+The rules ranked by confidence show very high conditional probabilities, often above 0.92. This means that users who highly rate a sequel season almost always rate the original season highly as well. However, confidence alone may be influenced by overall popularity. Therefore, lift remains important to confirm that these relationships reflect true dependence rather than general popularity effects.
+```{r}
+top_conf <- sort(rules_1lhs, by = "confidence", decreasing = TRUE)
+inspect(head(top_conf, 10))
+```
+
+# Visualization
+The graph visualization illustrates association rules as a network of connected anime titles. Stronger associations form visible clusters, particularly among sequel seasons, reinforcing the sequential nature of viewing behavior.
+```{r}
+plot(head(top_lift, 15), method="graph", engine="htmlwidget")
+```
+
+# Discussion
+
+The results reveal strong sequential and franchise-based consumption behavior. Many high-lift rules occur between sequel seasons of the same anime series. This suggests that anime consumption is structured and continuity-driven rather than independent. Lift proved more informative than confidence in identifying meaningful associations.
+
+# Conclusion
+
+This study demonstrates that association rule mining can effectively uncover structured user preference patterns in entertainment datasets. By treating users as transactions and highly rated anime titles as items, we identified strong co-occurrence relationships within the Top 200 anime.
+
+The findings confirm the presence of sequential viewing behavior, a clear franchise loyalty effect, and strong item co-dependence between related titles. In particular, sequel seasons frequently appeared together with high lift and confidence values, indicating that anime consumption is not random but highly structured.
+
+These results highlight the practical relevance of association rule mining for recommendation systems and digital content platforms. Understanding such structured preference patterns can improve personalized suggestions and user engagement strategies.
+
+Future research may extend this analysis by, examining genre-based associations, or comparing different support and confidence thresholds to evaluate the stability of discovered rules.
+
+
